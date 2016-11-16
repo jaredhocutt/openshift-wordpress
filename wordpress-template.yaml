@@ -1,0 +1,212 @@
+---
+
+kind: Template
+apiVersion: v1
+metadata:
+  name: wordpress
+  annotations:
+    openshift.io/display-name: WordPress
+    description: >
+      A WordPress application using persistent storage for WordPress uploads.
+    tags: instant-app,php,wordpress
+    iconClass: icon-php
+labels:
+  template: wordpress
+
+
+parameters:
+  - name: APPLICATION_NAME
+    description: >
+      The name of the application that will be used as a prefix for services,
+      routes, images, etc
+    value: wordpress
+    required: true
+
+  - name: SOURCE_REPOSITORY_URL
+    description: The URL of the repository with your application source code
+    value: https://github.com/jaredhocutt/wordpress.git
+    required: true
+
+  - name: SOURCE_REPOSITORY_REF
+    description: >
+      Set this to a branch name, tag or other ref of your repository if you
+      are not using the default branch
+
+  - name: CONTEXT_DIR
+    description: >
+      Set this to the relative path to your project if it is not in the root
+      of your repository
+
+  - name: GITHUB_WEBHOOK_SECRET
+    description: A secret string used to configure the GitHub webhook
+    generate: expression
+    from: "[a-zA-Z0-9]{40}"
+
+  - name: APPLICATION_DOMAIN
+    description: >
+      The exposed hostname that will route to the wordpress service, if left
+      blank a value will be defaulted
+    value:
+
+  - name: DATABASE_HOST
+    description: Database host
+    required: true
+
+  - name: DATABASE_NAME
+    description: Database name
+    value: wordpress
+    required: true
+
+  - name: DATABASE_USER
+    description: Database user name
+    value: wordpress
+    required: true
+
+  - name: DATABASE_PASSWORD
+    description: Database user password
+    generate: expression
+    from: "[a-zA-Z0-9]{16}"
+
+
+objects:
+  #############################################################################
+  # WordPress Service
+  #############################################################################
+  - kind: Service
+    apiVersion: v1
+    metadata:
+      name: ${APPLICATION_NAME}
+      annotations:
+        description: Exposes and load balances the application pods
+        service.alpha.openshift.io/dependencies: "[{'name': '${APPLICATION_NAME}-mysql', 'kind': 'Service'}]"
+    spec:
+      ports:
+        - name: web
+          port: 8080
+          targetPort: 8080
+      selector:
+        name: ${APPLICATION_NAME}
+
+  #############################################################################
+  # WordPress Route
+  #############################################################################
+  - kind: Route
+    apiVersion: v1
+    metadata:
+      name: ${APPLICATION_NAME}
+    spec:
+      host: ${APPLICATION_DOMAIN}
+      to:
+        kind: Service
+        name: ${APPLICATION_NAME}
+
+  #############################################################################
+  # WordPress ImageStream
+  #############################################################################
+  - kind: ImageStream
+    apiVersion: v1
+    metadata:
+      name: ${APPLICATION_NAME}
+      annotations:
+        description: Keeps track of changes in the application image
+
+  #############################################################################
+  # WordPress BuildConfig
+  #############################################################################
+  - kind: BuildConfig
+    apiVersion: v1
+    metadata:
+      name: ${APPLICATION_NAME}
+      annotations:
+        description: Defines how to build the application
+    spec:
+      source:
+        type: Git
+        git:
+          uri: ${SOURCE_REPOSITORY_URL}
+          ref: ${SOURCE_REPOSITORY_REF}
+        contextDir: ${CONTEXT_DIR}
+      strategy:
+        type: Source
+        sourceStrategy:
+          from:
+            kind: ImageStreamTag
+            namespace: openshift
+            name: php:5.6
+      output:
+        to:
+          kind: ImageStreamTag
+          name: ${APPLICATION_NAME}:latest
+      triggers:
+        - type: ImageChange
+        - type: ConfigChange
+        - type: GitHub
+          github:
+            secret: ${GITHUB_WEBHOOK_SECRET}
+
+  #############################################################################
+  # WordPress Uploads PersistentVolumeClaim
+  #############################################################################
+  - kind: PersistentVolumeClaim
+    apiVersion: v1
+    metadata:
+      name: ${APPLICATION_NAME}-uploads
+    spec:
+      accessModes:
+        - ReadWriteMany
+      resources:
+        requests:
+          storage: 1Gi
+
+  #############################################################################
+  # WordPress DeploymentConfig
+  #############################################################################
+  - kind: DeploymentConfig
+    apiVersion: v1
+    metadata:
+      name: ${APPLICATION_NAME}
+      annotations:
+        description: Defines how to deploy the application server
+    spec:
+      strategy:
+        type: Rolling
+      triggers:
+        - type: ImageChange
+          imageChangeParams:
+            automatic: true
+            containerNames:
+              - ${APPLICATION_NAME}
+            from:
+              kind: ImageStreamTag
+              name: ${APPLICATION_NAME}:latest
+        - type: ConfigChange
+      replicas: 1
+      selector:
+        name: ${APPLICATION_NAME}
+      template:
+        metadata:
+          name: ${APPLICATION_NAME}
+          labels:
+            name: ${APPLICATION_NAME}
+        spec:
+          containers:
+            - name: ${APPLICATION_NAME}
+              image: ${APPLICATION_NAME}
+              ports:
+                - containerPort: 8080
+              env:
+                - name: WORDPRESS_DB_HOST
+                  value: ${DATABASE_HOST}
+                - name: WORDPRESS_DB_NAME
+                  value: ${DATABASE_NAME}
+                - name: WORDPRESS_DB_USER
+                  value: ${DATABASE_USER}
+                - name: WORDPRESS_DB_PASSWORD
+                  value: ${DATABASE_PASSWORD}
+              volumeMounts:
+                - name: ${APPLICATION_NAME}-uploads
+                  mountPath: /opt/app-root/src/pv-uploads
+          volumes:
+            - name: ${APPLICATION_NAME}-uploads
+              persistentVolumeClaim:
+                claimName: ${APPLICATION_NAME}-uploads
