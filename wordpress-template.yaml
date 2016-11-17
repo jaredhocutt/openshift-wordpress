@@ -24,7 +24,7 @@ parameters:
 
   - name: SOURCE_REPOSITORY_URL
     description: The URL of the repository with your application source code
-    value: https://github.com/jaredhocutt/wordpress.git
+    value: https://github.com/jaredhocutt/openshift-wordpress.git
     required: true
 
   - name: SOURCE_REPOSITORY_REF
@@ -36,6 +36,7 @@ parameters:
     description: >
       Set this to the relative path to your project if it is not in the root
       of your repository
+    value: wordpress
 
   - name: GITHUB_WEBHOOK_SECRET
     description: A secret string used to configure the GitHub webhook
